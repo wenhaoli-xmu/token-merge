@@ -1,0 +1,6 @@
+{
+    "layer_cut": 0,
+    "last_n": 64,
+    "ratio_weight": 1.0,
+    "merge_method": "avg"
+}

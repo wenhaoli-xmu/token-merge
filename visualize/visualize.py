@@ -1,4 +1,4 @@
-from myabc.misc import get_model_and_tokenizer, get_env_conf
+from myabc.utils import get_model_and_tokenizer, get_env_conf
 from corpus import get_processor, LazyRandomSampleCorpus
 import argparse
 from copy import deepcopy

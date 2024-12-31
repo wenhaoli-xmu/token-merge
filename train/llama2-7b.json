@@ -6,13 +6,13 @@
         "model_structure": null,
         "save_ckp": "ckp/model.pth",
         "load_ckp": null,
-        "config": null,
+        "config": "config/train.json",
         "device_map": null
     },
 
     "train": {
         "train_iters": 1000,
-        "max_lr": 0.001,
+        "max_lr": 0.01,
         "warmup": 0.01,
         "beta1": 0.9,
         "beta2": 0.98,

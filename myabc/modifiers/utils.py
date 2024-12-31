@@ -1,7 +1,13 @@
 import torch
 import torch.utils.checkpoint
+from torch import distributed as dist
+
 from transformers.models.llama.modeling_llama import rotate_half
 from functools import partial
+
+
+def do_projection(proj, states, num_heads, head_dim):
+    return proj(states).unflatten(-1, (num_heads, head_dim)).transpose(1,2)
 
 
 def apply_rotary_pos_emb(mat, cos, sin, position_ids, unsqueeze_dim=1):
@@ -33,26 +39,34 @@ def check_and_apply_qk_rope(query, key, cos, sin, pos=0):
     return Q, K
 
 
-class Conv(torch.nn.Module):
-    def __init__(self, hidden_size, kernel_size):
+class ScoreHead(torch.nn.Module):
+    def __init__(self, hidden_size, kernel_size, dtype=None, device=None):
         super().__init__()
         self.hidden_size = hidden_size
-        self.conv = torch.nn.Conv1d(in_channels=hidden_size, out_channels=64, kernel_size=kernel_size)
-        self.linear = torch.nn.Linear(in_features=64, out_features=1)
+
+        if dtype is None:
+            dtype = torch.bfloat16
+        
+        if device is None:
+            device = 'cuda'
+
+        self.conv = torch.nn.Conv1d(
+            in_channels=hidden_size, 
+            out_channels=64, 
+            kernel_size=kernel_size, 
+            dtype=dtype,
+            device=device)
+    
+        self.linear = torch.nn.Linear(
+            in_features=64, 
+            out_features=1,
+            dtype=dtype,
+            device=device)
+
         torch.nn.init.xavier_uniform_(self.conv.weight)
         torch.nn.init.xavier_uniform_(self.linear.weight)
         torch.nn.init.constant_(self.conv.bias, 0.0)
-        torch.nn.init.constant_(self.linear.bias, -1.0)
-
-        self.is_training_enabled = False
-
-
-    def enable_grad(self):
-        self.is_training_enabled = True
-
-
-    def disable_grad(self):
-        self.is_training_enabled = False
+        torch.nn.init.constant_(self.linear.bias, 0.0)
 
 
     def forward(self, x):
@@ -60,25 +74,11 @@ class Conv(torch.nn.Module):
         assert x.ndim == 3 and x.shape[-1] == self.hidden_size, f"`x` should be 3 dimensional tensor with last dimension {self.hidden_size} but got: {x.shape}"
         assert x.shape[0] == 1, f"only support batch size 1 currently"
 
-        
+        logits = self.conv(x.transpose(-1,-2)).transpose(-1,-2)
+        logits = torch.nn.functional.silu(logits)
+        logits = self.linear(logits).squeeze(0)
 
-        if self.is_training_enabled:
-            assert x.requires_grad == False, f"expect x has no gradient"
-            with torch.enable_grad():
-                logits = self.conv(x.transpose(-1,-2)).transpose(-1,-2)
-                logits = torch.nn.functional.silu(logits)
-                logits = self.linear(logits)
-                return logits.squeeze(-1)
-        else:
-            logits = self.conv(x.transpose(-1,-2)).transpose(-1,-2)
-            logits = torch.nn.functional.silu(logits)
-            logits = self.linear(logits)
-            return logits.squeeze(-1)
-        
-        
-    def get_params(self):
-        return list(self.conv.parameters()) + list(self.linear.parameters())   
-
+        return logits
 
 
 
