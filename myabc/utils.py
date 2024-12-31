@@ -196,10 +196,6 @@ def average_filter(x, window):
 
     return y
 
-        
-
-
-
 
 class History:
     def __init__(self):

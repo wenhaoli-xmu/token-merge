@@ -173,9 +173,14 @@ if __name__ == '__main__':
         for i in range(n_sample_per_gpu):
 
             is_last_sample = i == n_sample_per_gpu - 1
+
+
             mask, grad = sample_mask(outputs, params, is_last_sample) 
 
-            sample_outputs = model(**batch, mask=mask)
+
+            sample_outputs = model(**batch, mask=mask, loss_baseline=outputs['loss'].item())
+
+
 
             pg.update(sample_outputs['reward'], grad)
             history.update(sample_outputs)

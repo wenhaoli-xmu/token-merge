@@ -6,7 +6,7 @@
         "model_structure": null,
         "save_ckp": null,
         "load_ckp": "ckp/model.pth",
-        "config": null,
+        "config": "config/train.json",
         "device_map": null
     },
     "eval": {

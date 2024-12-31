@@ -5,6 +5,7 @@ from transformers.models.llama.modeling_llama import repeat_kv
 from ..modifier import Modifier
 from .utils import ScoreHead, check_and_apply_qk_rope, slerp, do_projection
 from copy import deepcopy
+import numpy as np
 
 
 def model_forward(self, input_ids, mask):
@@ -49,6 +50,8 @@ def merge(hidden_states, mask, merge_method):
                 x = slerp(0.5, x, y)
             elif merge_method == 'drop':
                 ...
+            elif merge_method == 'max':
+                x = torch.maximum(x, y)
             else:
                 raise NotImplementedError(f"{merge_method}")
         
@@ -167,7 +170,7 @@ class ModelForTraining(Modifier):
     
 
     @torch.no_grad()
-    def forward(self, input_ids, labels, mask=None):
+    def forward(self, input_ids, labels, mask=None, loss_baseline=None):
 
         """
         Return
@@ -202,6 +205,17 @@ class ModelForTraining(Modifier):
 
         # compute reward
         if mask is not None:
-            reward = -loss + self.conf['ratio_weight'] * ratio
+            if self.conf['loss_version'] == 'v1':
+                reward = -loss + self.conf['ratio_weight'] * ratio
+                
+            elif self.conf['loss_version'] == 'v2':
+                reward = -(loss - loss_baseline).abs() + self.conf['ratio_weight'] * ratio
+
+            elif self.conf['loss_version'] == 'v3':
+                reward = -(loss - loss_baseline).abs().exp() + self.conf['ratio_weight'] * ratio
+                
+            else:
+                raise NotImplementedError(self.conf['loss_version'])
+            
 
         return dict(loss=loss, score=score, ratio=ratio, reward=reward)
