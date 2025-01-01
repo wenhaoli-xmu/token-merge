@@ -178,12 +178,12 @@ if __name__ == '__main__':
             mask, grad = sample_mask(outputs, params, is_last_sample) 
 
 
-            sample_outputs = model(**batch, mask=mask, loss_baseline=outputs['loss'].item())
+            sample_outputs = model(**batch, mask=mask, outputs=outputs)
 
 
-
-            pg.update(sample_outputs['reward'], grad)
+            pg.update(sample_outputs, grad)
             history.update(sample_outputs)
+
 
         pg.step()
         history.step(outputs)

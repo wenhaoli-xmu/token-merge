@@ -170,7 +170,7 @@ class ModelForTraining(Modifier):
     
 
     @torch.no_grad()
-    def forward(self, input_ids, labels, mask=None, loss_baseline=None):
+    def forward(self, input_ids, labels, mask=None, outputs=None):
 
         """
         Return
@@ -186,9 +186,6 @@ class ModelForTraining(Modifier):
 
         ratio, reward = None, None
         last_n = self.conf['last_n']
-        
-        # preprocess mask and labels
-        labels[:, :-last_n] = -100
 
         if mask is not None:
             mask[-last_n:] = [False] * last_n
@@ -199,21 +196,29 @@ class ModelForTraining(Modifier):
         logits, score = self.model(input_ids=input_ids, mask=mask)
         
         # compute loss
-        logits = logits.squeeze(0)
-        labels = labels.squeeze(0)
-        loss = torch.nn.functional.cross_entropy(logits, labels)
+        logits = logits.squeeze(0)[-last_n:]
+        labels = labels.squeeze(0)[-last_n:]
+        loss = torch.nn.functional.cross_entropy(logits, labels, reduce=False)
 
         # compute reward
         if mask is not None:
             if self.conf['loss_version'] == 'v1':
-                reward = -loss + self.conf['ratio_weight'] * ratio
+                reward = -loss.mean() + self.conf['ratio_weight'] * ratio
                 
             elif self.conf['loss_version'] == 'v2':
-                reward = -(loss - loss_baseline).abs() + self.conf['ratio_weight'] * ratio
+                reward = -(loss.mean() - outputs['loss'].mean()).abs() + self.conf['ratio_weight'] * ratio
 
             elif self.conf['loss_version'] == 'v3':
-                reward = -(loss - loss_baseline).abs().exp() + self.conf['ratio_weight'] * ratio
-                
+                reward = -(loss.mean() - outputs['loss'].mean()).abs().exp() + self.conf['ratio_weight'] * ratio
+
+            elif self.conf['loss_version'] == 'v4':
+                reward = -(loss - outputs['loss']).abs().mean() + self.conf['ratio_weight'] * ratio
+
+            elif self.conf['loss_version'] == 'v5':
+                import IPython
+                IPython.embed()
+                reward = -torch.nn.functional.kl_div(logits, outputs['logits']) + self.conf['ratio_weight'] * ratio
+
             else:
                 raise NotImplementedError(self.conf['loss_version'])
             

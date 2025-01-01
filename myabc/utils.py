@@ -157,8 +157,8 @@ class PolicyGradient:
         self.local_rewards = []
         self.local_grads = []
 
-    def update(self, reward, grad):
-        self.local_rewards.append(reward)
+    def update(self, sample_outputs, grad):
+        self.local_rewards.append(sample_outputs['reward'])
         self.local_grads.append(grad)
 
     def step(self):
@@ -215,7 +215,7 @@ class History:
         self._rewards = []
 
     def update(self, outputs_sample):
-        self._losses.append(outputs_sample['loss'].item())
+        self._losses.append(outputs_sample['loss'].mean().item())
         self._ratios.append(outputs_sample['ratio'])
         self._rewards.append(outputs_sample['reward'].item())
 
@@ -223,7 +223,7 @@ class History:
         loss = np.mean(self._losses)
         ratio = np.mean(self._ratios)
         reward = np.mean(self._rewards)
-        loss_baseline = outputs['loss'].item()
+        loss_baseline = outputs['loss'].mean().item()
 
 
         if dist.get_rank() == 0:
