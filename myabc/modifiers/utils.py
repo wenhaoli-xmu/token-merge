@@ -4,6 +4,7 @@ from torch import distributed as dist
 
 from transformers.models.llama.modeling_llama import rotate_half
 from functools import partial
+from copy import deepcopy
 
 
 def do_projection(proj, states, num_heads, head_dim):
@@ -96,6 +97,11 @@ def slerp(t: torch.Tensor, v0: torch.Tensor, v1: torch.Tensor, DOT_THRESHOLD: fl
     Returns:
         torch.Tensor: Interpolated vector between v0 and v1.
     """
+    dtype = v0.dtype
+
+    v0 = v0.double()
+    v1 = v1.double()
+
     # Copy the vectors to reuse them later
     v0_copy = v0.clone().detach()
     v1_copy = v1.clone().detach()
@@ -106,8 +112,9 @@ def slerp(t: torch.Tensor, v0: torch.Tensor, v1: torch.Tensor, DOT_THRESHOLD: fl
 
     # Dot product with the normalized vectors
     dot = torch.sum(v0 * v1, dim=-1)
+    dot = torch.minimum(dot, torch.full_like(dot, fill_value=0.999))
 
-    return slerp_torch(dot, t, v0_copy, v1_copy)
+    return slerp_torch(dot, t, v0_copy, v1_copy).type(dtype)
 
 
 
@@ -140,6 +147,7 @@ def slerp_torch(dot: torch.Tensor, t: torch.Tensor, v0: torch.Tensor, v1: torch.
     Returns:
         torch.Tensor: Interpolated vector between v0 and v1.
     """
+
     theta_0 = torch.acos(dot)
     sin_theta_0 = torch.sin(theta_0)
 
@@ -169,3 +177,52 @@ def normalize_torch(v: torch.Tensor, eps: float) -> torch.Tensor:
     if norm_v > eps:
         v = v / norm_v
     return v
+
+
+
+def prune_labels(labels, mask):
+    mask = torch.tensor(mask, dtype=torch.bool, device=labels.device)
+    other_labels, last_label = labels[:, :-1], labels[:, -1:]
+    other_labels = other_labels[:, ~mask]
+    return torch.cat([other_labels, last_label], dim=-1)
+
+
+def merge(hidden_states, mask, merge_method):
+
+    _mask = deepcopy(mask)
+
+    length = hidden_states.shape[-2]
+    hidden_states = list(hidden_states.squeeze(0).chunk(length,dim=0))
+    merged = []
+
+    assert len(_mask) == length - 1
+    _mask.insert(0, False)
+    while len(_mask) > 0:
+
+        m = _mask.pop(0)
+        x = hidden_states.pop(0)
+
+        assert m is False
+
+        while len(_mask) > 0 and _mask[0] is True:
+            _mask.pop(0)
+            y = hidden_states.pop(0)
+
+            if merge_method == 'avg':
+                x = (x + y) / 2
+            elif merge_method == 'add':
+                x = x + y
+            elif merge_method == 'slerp':
+                x = slerp(0.5, x, y)
+            elif merge_method == 'drop':
+                ...
+            elif merge_method == 'max':
+                x = torch.maximum(x, y)
+            elif merge_method == 'absmax':
+                x = torch.where(torch.abs(x) > torch.abs(y), x, y)
+            else:
+                raise NotImplementedError(f"{merge_method}")
+        
+        merged.append(x)
+
+    return torch.cat(merged, dim=0).unsqueeze(0)

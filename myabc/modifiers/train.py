@@ -3,61 +3,13 @@ import types
 import torch.distributed
 from transformers.models.llama.modeling_llama import repeat_kv
 from ..modifier import Modifier
-from .utils import ScoreHead, check_and_apply_qk_rope, slerp, do_projection
-from copy import deepcopy
-import numpy as np
+from .utils import ScoreHead, check_and_apply_qk_rope, do_projection, prune_labels, merge
 
 
 def model_forward(self, input_ids, mask):
     hidden_states, score = self.model(input_ids, mask)
     logits = self.lm_head(hidden_states).float()
     return logits, score
-
-
-def prune_labels(labels, mask):
-    mask = torch.tensor(mask, dtype=torch.bool, device=labels.device)
-    other_labels, last_label = labels[:, :-1], labels[:, -1:]
-    other_labels = other_labels[:, ~mask]
-    return torch.cat([other_labels, last_label], dim=-1)
-
-
-def merge(hidden_states, mask, merge_method):
-
-    _mask = deepcopy(mask)
-
-    length = hidden_states.shape[-2]
-    hidden_states = list(hidden_states.squeeze(0).chunk(length,dim=0))
-    merged = []
-
-    assert len(_mask) == length - 1
-    _mask.insert(0, False)
-    while len(_mask) > 0:
-
-        m = _mask.pop(0)
-        x = hidden_states.pop(0)
-
-        assert m is False
-
-        while len(_mask) > 0 and _mask[0] is True:
-            _mask.pop(0)
-            y = hidden_states.pop(0)
-
-            if merge_method == 'avg':
-                x = (x + y) / 2
-            elif merge_method == 'add':
-                x = x + y
-            elif merge_method == 'slerp':
-                x = slerp(0.5, x, y)
-            elif merge_method == 'drop':
-                ...
-            elif merge_method == 'max':
-                x = torch.maximum(x, y)
-            else:
-                raise NotImplementedError(f"{merge_method}")
-        
-        merged.append(x)
-
-    return torch.cat(merged, dim=0).unsqueeze(0)
 
 
 
@@ -175,13 +127,8 @@ class ModelForTraining(Modifier):
         """
         Return
         ------
-        1. mask == None: return (loss, score)
+        1. mask == None: return (loss, score, logits)
         2. mask != None: return (loss, ratio, reward)
-
-        :loss: language modeling loss
-        :ratio: masked out ratio
-        :score: output score of mask predictor
-        :reward: used in policy gradient
         """
 
         ratio, reward = None, None
@@ -215,12 +162,33 @@ class ModelForTraining(Modifier):
                 reward = -(loss - outputs['loss']).abs().mean() + self.conf['ratio_weight'] * ratio
 
             elif self.conf['loss_version'] == 'v5':
-                import IPython
-                IPython.embed()
-                reward = -torch.nn.functional.kl_div(logits, outputs['logits']) + self.conf['ratio_weight'] * ratio
-
+                logits = torch.nn.functional.log_softmax(logits, dim=-1)
+                target = torch.nn.functional.softmax(outputs['logits'] / 0.9, dim=-1)
+                reward = -torch.nn.functional.kl_div(logits, target) + self.conf['ratio_weight'] * ratio
             else:
                 raise NotImplementedError(self.conf['loss_version'])
+
+            logits = None
             
 
-        return dict(loss=loss, score=score, ratio=ratio, reward=reward)
+        """
+        Return
+        ------
+
+        :loss: langauge modeling loss without batch dim reduction
+
+        :logits: output logits, maintaining only the last n tokens
+
+        :score: mask predictor output
+
+        :ratio: pruning ratio
+
+        :reward: reward used in policy gradeint
+        """
+
+        return dict(
+            loss=loss,
+            logits=logits, 
+            score=score, 
+            ratio=ratio, 
+            reward=reward)

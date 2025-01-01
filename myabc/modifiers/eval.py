@@ -3,7 +3,7 @@ import types
 import torch.distributed
 from transformers.models.llama.modeling_llama import repeat_kv
 from ..modifier import Modifier
-from .utils import ScoreHead, check_and_apply_qk_rope, slerp, do_projection
+from .utils import ScoreHead, check_and_apply_qk_rope, prune_labels, merge, do_projection
 from copy import deepcopy
 
 
@@ -11,52 +11,6 @@ def model_forward(self, input_ids, enable_prune):
     hidden_states, mask = self.model(input_ids, enable_prune)
     logits = self.lm_head(hidden_states).float()
     return logits, mask
-
-
-def prune_labels(labels, mask):
-    mask = torch.tensor(mask, dtype=torch.bool, device=labels.device)
-    other_labels, last_label = labels[:, :-1], labels[:, -1:]
-    other_labels = other_labels[:, ~mask]
-    return torch.cat([other_labels, last_label], dim=-1)
-
-
-def merge(hidden_states, mask, merge_method):
-
-    _mask = deepcopy(mask)
-
-    length = hidden_states.shape[-2]
-    hidden_states = list(hidden_states.squeeze(0).chunk(length,dim=0))
-    merged = []
-
-    assert len(_mask) == length - 1
-    _mask.insert(0, False)
-    while len(_mask) > 0:
-
-        m = _mask.pop(0)
-        x = hidden_states.pop(0)
-
-        assert m is False
-
-        while len(_mask) > 0 and _mask[0] is True:
-            _mask.pop(0)
-            y = hidden_states.pop(0)
-
-            if merge_method == 'avg':
-                x = (x + y) / 2
-            elif merge_method == 'add':
-                x = x + y
-            elif merge_method == 'slerp':
-                x = slerp(0.5, x, y)
-            elif merge_method == 'drop':
-                ...
-            elif merge_method == 'max':
-                x = torch.maximum(x, y)
-            else:
-                raise NotImplementedError(f"{merge_method}")
-        
-        merged.append(x)
-
-    return torch.cat(merged, dim=0).unsqueeze(0)
 
 
 
