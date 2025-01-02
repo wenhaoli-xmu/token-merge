@@ -67,7 +67,7 @@ class ScoreHead(torch.nn.Module):
         torch.nn.init.xavier_uniform_(self.conv.weight)
         torch.nn.init.xavier_uniform_(self.linear.weight)
         torch.nn.init.constant_(self.conv.bias, 0.0)
-        torch.nn.init.constant_(self.linear.bias, 0.0)
+        torch.nn.init.constant_(self.linear.bias, -1.0)
 
 
     def forward(self, x):

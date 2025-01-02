@@ -3,5 +3,5 @@
     "last_n": 64,
     "ratio_weight": 1.0,
     "merge_method": "slerp",
-    "loss_version": "v5"
+    "loss_version": "v4"
 }
